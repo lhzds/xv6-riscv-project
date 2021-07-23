@@ -2502,18 +2502,18 @@ execout(char *s)
       exit(1);
     } else if(pid == 0){
       // allocate all of memory.
+      printf("avail: %d\n", avail);
       while(1){
         uint64 a = (uint64) sbrk(4096);
         if(a == 0xffffffffffffffffLL)
           break;
         *(char*)(a + 4096 - 1) = 1;
       }
-
+      printf("finish alloc\n");
       // free a few pages, in order to let exec() make some
       // progress.
       for(int i = 0; i < avail; i++)
         sbrk(-4096);
-      
       close(1);
       char *args[] = { "echo", "x", 0 };
       exec("echo", args);
@@ -2724,6 +2724,7 @@ main(int argc, char *argv[])
 
   printf("usertests starting\n");
   int free0 = countfree();
+  printf("free0: %d\n", free0);
   int free1 = 0;
   int fail = 0;
   for (struct test *t = tests; t->s != 0; t++) {

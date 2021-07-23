@@ -220,6 +220,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 // freeing the leaf physical memory page
 void proc_freekpagetable(struct proc* p) {
   pagetable_t kpagetable = p->kernel_pagetable;
+  ukvmunmap(kpagetable, 0, PGROUNDUP(p->sz)/PGSIZE);
   ukvmfree(kpagetable, p->kstack);
 }
 
@@ -247,7 +248,9 @@ userinit(void)
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
+
   p->sz = PGSIZE;
+  ukvmcopy(p->pagetable, p->kernel_pagetable, PGSIZE);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -278,6 +281,7 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  ukvmcopy(p->pagetable, p->kernel_pagetable, sz);
   return 0;
 }
 
@@ -301,7 +305,9 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
+  ukvmcopy(np->pagetable, np->kernel_pagetable, np->sz);
 
   np->parent = p;
 
