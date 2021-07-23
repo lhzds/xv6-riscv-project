@@ -120,6 +120,14 @@ found:
     release(&p->lock);
     return 0;
   }
+  
+  // Initialize the proc's kernel page
+  p->kernel_pagetable = proc_kpagetable(p);
+  if(p->kernel_pagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
 
   // Set up new context to start executing at forkret,
   // which returns to user space.
@@ -141,6 +149,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kernel_pagetable)
+    proc_freekpagetable(p);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -185,6 +195,17 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
+// initialize the process's kernel page table
+pagetable_t
+proc_kpagetable(struct proc* p) {
+  pagetable_t kpagetable = uvmcreate();
+  if (kpagetable == 0) {
+    return 0;
+  }
+  ukvminit(kpagetable, p->kstack);
+  return kpagetable;
+}
+
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -193,6 +214,13 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
+}
+
+// Free a process's kernel page table without
+// freeing the leaf physical memory page
+void proc_freekpagetable(struct proc* p) {
+  pagetable_t kpagetable = p->kernel_pagetable;
+  ukvmfree(kpagetable, p->kstack);
 }
 
 // a user program that calls exec("/init")
@@ -473,11 +501,18 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        //Load process's kernel page table
+        w_satp(MAKE_SATP(p->kernel_pagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+
+        // Reload the gobal kernel page table
+        kvminithart();
 
         found = 1;
       }
