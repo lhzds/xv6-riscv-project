@@ -353,6 +353,45 @@ freewalk(pagetable_t pagetable)
   kfree((void*)pagetable);
 }
 
+uint64
+ukvmpa(pagetable_t kpagetable, uint64 va)
+{
+  uint64 off = va % PGSIZE;
+  pte_t *pte;
+  uint64 pa;
+  
+  pte = walk(kpagetable, va, 0);
+  if(pte == 0)
+    panic("ukvmpa1");
+  if((*pte & PTE_V) == 0)
+    panic("ukvmpa2");
+  pa = PTE2PA(*pte);
+  return pa+off;
+}
+
+// Recursively free page-table pages.
+// All leaf mappings must already have been removed.
+void
+freewalk1(pagetable_t pagetable, uint64 va)
+{
+  // there are 2^9 = 512 PTEs in a page table.
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      freewalk1((pagetable_t)child, (va << 9) | i);
+      pagetable[i] = 0;
+    } else if(pte & PTE_V){
+      uint64 rva = ((va << 9) | i) << 12;
+      printf("DEBUG: va: %p pte:%p pa:%p\n", rva, pte, PTE2PA(pte));
+      //printf("DEBUG: va: %p pte:%p pa:%p pa2:%p\n", rva, pte, PTE2PA(pte), ukvmpa(pagetable, rva));
+      panic("freewalk1: leaf");
+    }
+  }
+  kfree((void*)pagetable);
+}
+
 // Free user memory pages,
 // then free page-table pages.
 void
@@ -360,6 +399,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+  printf("DEBUG: uvmfree\n");
   freewalk(pagetable);
 }
 
@@ -375,7 +415,10 @@ void ukvmfree(pagetable_t kpagetable, uint64 stack_va) {
   ukvmunmap(kpagetable, TRAMPOLINE, 1);
   // unmap the process's kernel stack
   ukvmunmap(kpagetable, stack_va, 1);
-  freewalk(kpagetable);
+  
+  // printf("DEBUG: ukvmfree\n");
+  // vmprint(kpagetable);
+  // freewalk1(kpagetable, (uint64)0);
 }
 
 // Given a parent process's page table, copy
@@ -414,6 +457,26 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return -1;
 }
 
+//Copy user mappings to process' kernel page table
+void
+ukvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 src_va, uint64 len) {
+  pte_t *pte, *kpte;
+
+  for (uint64 va = src_va; va < src_va + len; va += PGSIZE) {
+    if ((pte = walk(pagetable, va, 0)) == 0) {
+      panic("ukvmcopy: pte should exist");
+    }
+    if((*pte & PTE_V) == 0) {
+      printf("DEBUG: va: %p pte:%p pa:%p\n", va, *pte, PTE2PA(*pte));
+      panic("ukvmcopy: page not present");
+    }
+    if ((kpte = walk(kpagetable, va, 1)) == 0) {
+      panic("ukvmcopy: kpte should exisst");
+    }
+    *kpte = (*pte) & ~PTE_U;
+  }
+}
+
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
@@ -450,28 +513,6 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     dstva = va0 + PGSIZE;
   }
   return 0;
-}
-
-int order = 0;
-int cnt = 0;
-//Copy user mappings to process' kernel page table
-void
-ukvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 sz) {
-  pte_t *pte, *kpte;
-  for (uint64 va = 0; va < PLIC; va += PGSIZE) {
-    pte = walk(pagetable, va, 0);
-    if (pte) {
-      if (order == 1) printf("va: %p  *pte: %p pa: %p\n", va, *pte, PTE2PA(*pte));
-      cnt++;
-      kpte = walk(kpagetable, va, 1);
-      if (kpte == 0) {
-        panic("ukvmcopy");
-      }
-      *kpte = (*pte) & ~PTE_U;
-    }
-  }
-  order++;
-  //printf("order: %d, cnt: %d\n", order, cnt);
 }
 
 // Copy from user to kernel.

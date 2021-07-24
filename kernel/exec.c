@@ -111,7 +111,8 @@ exec(char *path, char **argv)
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
-  ukvmcopy(p->pagetable, p->kernel_pagetable, sz);
+  printf("DEBUG: exec oldsz:%p newsz:%p\n", p->sz, sz);
+  ukvmcopy(p->pagetable, p->kernel_pagetable, 0, sz);
 
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main

@@ -147,8 +147,10 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
-  if(p->pagetable)
+  if(p->pagetable) {
+    printf("DEBUG: p->pagetable not null, p->sz: %d\n", p->sz);
     proc_freepagetable(p->pagetable, p->sz);
+  }
   if(p->kernel_pagetable)
     proc_freekpagetable(p);
   p->pagetable = 0;
@@ -220,8 +222,14 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 // freeing the leaf physical memory page
 void proc_freekpagetable(struct proc* p) {
   pagetable_t kpagetable = p->kernel_pagetable;
-  ukvmunmap(kpagetable, 0, PGROUNDUP(p->sz)/PGSIZE);
   ukvmfree(kpagetable, p->kstack);
+  vmprint(kpagetable);
+  printf("*****************************************************************************\n");
+  ukvmunmap(kpagetable, 0, PGROUNDUP(p->sz)/PGSIZE);
+  //ukvmfree(kpagetable, p->kstack);
+  printf("DEBUG: ukvmfree\n");
+  vmprint(kpagetable);
+  freewalk1(kpagetable, (uint64)0);
 }
 
 // a user program that calls exec("/init")
@@ -250,7 +258,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
 
   p->sz = PGSIZE;
-  ukvmcopy(p->pagetable, p->kernel_pagetable, PGSIZE);
+  printf("DEBUG: userinit\n");
+  ukvmcopy(p->pagetable, p->kernel_pagetable, 0, PGSIZE);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -277,11 +286,13 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    printf("DEBUG: growproc n: %d\n", n);
+    ukvmcopy(p->pagetable, p->kernel_pagetable, sz - n, n);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    printf("DEBUG: growproc n: %d\n", n);
   }
   p->sz = sz;
-  ukvmcopy(p->pagetable, p->kernel_pagetable, sz);
   return 0;
 }
 
@@ -307,7 +318,8 @@ fork(void)
   }
 
   np->sz = p->sz;
-  ukvmcopy(np->pagetable, np->kernel_pagetable, np->sz);
+  printf("DEBUG: fork\n");
+  ukvmcopy(np->pagetable, np->kernel_pagetable, 0, np->sz);
 
   np->parent = p;
 
