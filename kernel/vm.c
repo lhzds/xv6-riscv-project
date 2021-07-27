@@ -399,7 +399,7 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
-  printf("DEBUG: uvmfree\n");
+  //printf("DEBUG: uvmfree\n");
   freewalk(pagetable);
 }
 
@@ -459,10 +459,15 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
 //Copy user mappings to process' kernel page table
 void
-ukvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 src_va, uint64 len) {
+ukvmcopy(pagetable_t pagetable, pagetable_t kpagetable, uint64 srcva, uint64 npages) {
+  if (npages < 0) {
+    panic("ukvmcopy");
+  }
   pte_t *pte, *kpte;
-
-  for (uint64 va = src_va; va < src_va + len; va += PGSIZE) {
+  uint64 va;
+  
+  srcva = PGROUNDUP(srcva);
+  for (va = srcva; va < srcva + npages * PGSIZE; va += PGSIZE) {
     if ((pte = walk(pagetable, va, 0)) == 0) {
       panic("ukvmcopy: pte should exist");
     }

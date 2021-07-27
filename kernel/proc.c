@@ -148,7 +148,7 @@ freeproc(struct proc *p)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable) {
-    printf("DEBUG: p->pagetable not null, p->sz: %d\n", p->sz);
+    //printf("DEBUG: p->pagetable not null, p->sz: %d\n", p->sz);
     proc_freepagetable(p->pagetable, p->sz);
   }
   if(p->kernel_pagetable)
@@ -223,12 +223,12 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 void proc_freekpagetable(struct proc* p) {
   pagetable_t kpagetable = p->kernel_pagetable;
   ukvmfree(kpagetable, p->kstack);
-  vmprint(kpagetable);
-  printf("*****************************************************************************\n");
+  //vmprint(kpagetable);
+  //printf("*****************************************************************************\n");
   ukvmunmap(kpagetable, 0, PGROUNDUP(p->sz)/PGSIZE);
   //ukvmfree(kpagetable, p->kstack);
-  printf("DEBUG: ukvmfree\n");
-  vmprint(kpagetable);
+  //printf("DEBUG: ukvmfree\n");
+  //vmprint(kpagetable);
   freewalk1(kpagetable, (uint64)0);
 }
 
@@ -259,7 +259,7 @@ userinit(void)
 
   p->sz = PGSIZE;
   printf("DEBUG: userinit\n");
-  ukvmcopy(p->pagetable, p->kernel_pagetable, 0, PGSIZE);
+  ukvmcopy(p->pagetable, p->kernel_pagetable, 0, 1);
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -278,21 +278,30 @@ userinit(void)
 int
 growproc(int n)
 {
-  uint sz;
+  uint oldsz, newsz;
   struct proc *p = myproc();
 
-  sz = p->sz;
+  newsz = oldsz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    if((newsz = uvmalloc(p->pagetable, oldsz, oldsz + n)) == 0) {
       return -1;
     }
-    printf("DEBUG: growproc n: %d\n", n);
-    ukvmcopy(p->pagetable, p->kernel_pagetable, sz - n, n);
+
+    //printf("DEBUG: growproc n: %d\n", n);
+    if (PGROUNDUP(oldsz) < PGROUNDUP(newsz)) {
+      uint npages = (PGROUNDUP(newsz) - PGROUNDUP(oldsz)) / PGSIZE;
+      ukvmcopy(p->pagetable, p->kernel_pagetable, oldsz, npages);
+    }
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
-    printf("DEBUG: growproc n: %d\n", n);
+    newsz = uvmdealloc(p->pagetable, oldsz, oldsz + n);
+
+    //printf("DEBUG: growproc n: %d\n", n);
+    if (PGROUNDUP(newsz) < PGROUNDUP(oldsz)) {
+      uint npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+      ukvmunmap(p->kernel_pagetable, PGROUNDUP(newsz), npages);
+    }
   }
-  p->sz = sz;
+  p->sz = newsz;
   return 0;
 }
 
@@ -318,8 +327,8 @@ fork(void)
   }
 
   np->sz = p->sz;
-  printf("DEBUG: fork\n");
-  ukvmcopy(np->pagetable, np->kernel_pagetable, 0, np->sz);
+  //printf("DEBUG: fork\n");
+  ukvmcopy(np->pagetable, np->kernel_pagetable, 0, PGROUNDUP(np->sz) / PGSIZE);
 
   np->parent = p;
 
