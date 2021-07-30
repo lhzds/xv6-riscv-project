@@ -21,6 +21,23 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
+int 
+is_procpgtbl(pagetable_t pagetable) {
+  return pagetable == myproc()->pagetable;
+}
+
+int
+proc_validva(uint64 va) {
+  // not in the guard page if the proc isn't the first proc
+  // (the first proc doesn't have a guard page)
+  struct proc *p = myproc();
+  uint64 stackbase = PGROUNDDOWN(p->trapframe->sp);
+  int ret = !(p->pid != 1 && stackbase - PGSIZE <= va && va < stackbase);
+
+  // in the user addr space
+  return ret && 0 <= va && va < p->sz;
+}
+
 // initialize the proc table at boot time.
 void
 procinit(void)

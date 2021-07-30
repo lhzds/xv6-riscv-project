@@ -65,6 +65,20 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if((r_scause() == 15 || r_scause() == 13) && proc_validva(r_stval())) {
+    char *mem;
+    uint64 va;
+
+    if ((mem = kalloc()) == 0) {
+      p->killed = 1;
+    } else {
+      memset(mem, 0, PGSIZE);
+      va = PGROUNDDOWN(r_stval());
+      if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_U | PTE_R | PTE_W) != 0){
+        kfree(mem);
+        p->killed = 1;
+      }
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -146,6 +160,7 @@ kerneltrap()
   if((which_dev = devintr()) == 0){
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
+    
     panic("kerneltrap");
   }
 

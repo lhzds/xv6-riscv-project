@@ -2607,17 +2607,14 @@ countfree()
 
       // modify the memory to make sure it's really allocated.
       *(char *)(a + 4096 - 1) = 1;
-
       // report back one more page.
       if(write(fds[1], "x", 1) != 1){
         printf("write() failed in countfree()\n");
         exit(1);
       }
     }
-
     exit(0);
   }
-
   close(fds[1]);
 
   int n = 0;
@@ -2769,7 +2766,6 @@ main(int argc, char *argv[])
       }
     }
   }
-
   printf("usertests starting\n");
   int free0 = countfree();
   int free1 = 0;
