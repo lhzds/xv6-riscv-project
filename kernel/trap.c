@@ -10,6 +10,7 @@ struct spinlock tickslock;
 uint ticks;
 
 extern char trampoline[], uservec[], userret[];
+extern int ref_counters[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
@@ -65,6 +66,10 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if((r_scause() == 13 || r_scause() == 15) && is_cowpage(p->pagetable, r_stval())) {
+    if (copy_on_write(p->pagetable, r_stval()) != 0) {
+      p->killed = 1;
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

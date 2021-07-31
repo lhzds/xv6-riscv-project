@@ -63,6 +63,9 @@ void            ramdiskrw(struct buf*);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+int             ref_inc(uint64);
+int             ref_dec(uint64);
+int             ref_cnt(uint64);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -104,6 +107,7 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+int             is_cowpage(pagetable_t, uint64);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
@@ -171,6 +175,8 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+int             copy_on_write(pagetable_t, uint64);
+int             uvmmap(pagetable_t, uint64, uint64, uint64, int);
 
 // plic.c
 void            plicinit(void);
