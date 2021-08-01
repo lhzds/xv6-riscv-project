@@ -379,14 +379,19 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       return -1;
 
     pte_t *pte = walk(pagetable, va0, 0);
-    if(pte == 0)
+    if (pte == 0) {
+      return -1; 
+    }
+    if ((*pte & PTE_V) == 0) {
       return -1;
-    if((*pte & PTE_V) == 0)
+    }
+    if ((*pte & PTE_U) == 0) {
       return -1;
-    if((*pte & PTE_U) == 0)
+    }
+    if (copy_on_write(pagetable, va0, pte) == -1) {
       return -1;
-    if (!(*pte & PTE_W) && (*pte & PTE_COW) && copy_on_write(pagetable, va0) != 0)
-      return -1;
+    }
+
     pa0 = PTE2PA(*pte);
 
     n = PGSIZE - (dstva - va0);
@@ -469,20 +474,30 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
-int is_cowpage(pagetable_t pagetable, uint64 va) {
-  pte_t *pte = walk(pagetable, va, 0);
-  if (pte == 0) {
-    return 0;
-  }
-
-  return ((*pte & PTE_V) && (*pte & PTE_COW));
-}
+// the level3_pte is optional
+// return 1 if the page not valid. return -1 if there's no free mem. return 0 on success
 
 int
-copy_on_write(pagetable_t pagetable, uint64 va) {
+copy_on_write(pagetable_t pagetable, uint64 va, pte_t *level3_pte) {
     va = PGROUNDDOWN(va);
-    pte_t *pte = walk(pagetable, va, 0);
-    uint64 pa = PTE2PA(*pte);
+    if (level3_pte == 0) {
+      level3_pte = walk(pagetable, va, 0);
+    }
+    if (level3_pte == 0) {
+      return 1;
+    }
+    if ((*level3_pte & PTE_V) == 0 ) {
+      return 1;
+    }
+    if ((*level3_pte & PTE_U) == 0 ) {
+      return 1;
+    }
+    if ((*level3_pte & PTE_COW) == 0 || (*level3_pte & PTE_W)) {
+      return 1;
+    }
+
+
+    uint64 pa = PTE2PA(*level3_pte);
     
     if (ref_cnt(pa) > 1) {
       char *mem = kalloc();
@@ -491,7 +506,7 @@ copy_on_write(pagetable_t pagetable, uint64 va) {
         return -1;
       } 
       memmove(mem, (void *)pa, PGSIZE);
-      uint flags = PTE_FLAGS(*pte);
+      uint flags = PTE_FLAGS(*level3_pte);
       flags |= PTE_W;
       flags &= ~PTE_COW;
       uvmunmap(pagetable, va, 1, 1); // corresponding ref_counter minus 1
@@ -500,8 +515,8 @@ copy_on_write(pagetable_t pagetable, uint64 va) {
         return -1;
       }
     } else if (ref_cnt(pa) == 1) {
-        *pte |= PTE_W;
-        *pte &= ~PTE_COW;
+        *level3_pte |= PTE_W;
+        *level3_pte &= ~PTE_COW;
     }
     return 0;
 }
