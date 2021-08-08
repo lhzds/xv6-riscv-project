@@ -322,6 +322,28 @@ sys_open(void)
     return -1;
   }
 
+  int depth = 0;
+  while(!(omode & O_NOFOLLOW) && ip->type == T_SYMLINK) {
+    if (depth > 10) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    char target[MAXPATH + 1];
+    if (readi(ip, 0, (uint64)target, 0, MAXPATH) <= 0) {
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    iunlockput(ip);
+    if ((ip = namei(target)) == 0) {
+      end_op();
+      return -1;
+    }
+    ilock(ip);
+    ++depth;
+  }
+
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
       fileclose(f);
@@ -482,5 +504,28 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void) {
+  struct inode *ip;
+  char target[MAXPATH], symlink[MAXPATH];
+  if (argstr(0, target, MAXPATH) < 0 || argstr(1, symlink, MAXPATH) < 0) {
+    return -1;
+  }
+
+  begin_op();
+  ip = create(symlink, T_SYMLINK, 0, 0);
+  if(ip == 0){
+    end_op();
+    return -1;
+  }
+  int len = strlen(target);
+  if (writei(ip, 0, (uint64)target, 0, len) < len) {
+    panic("create symlink");
+  }
+  iunlockput(ip);
+  end_op();
   return 0;
 }
