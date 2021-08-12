@@ -16,6 +16,8 @@
 #include "file.h"
 #include "fcntl.h"
 
+#define min(a, b) ((a) < (b) ? (a) : (b))
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -481,6 +483,83 @@ sys_pipe(void)
     fileclose(rf);
     fileclose(wf);
     return -1;
+  }
+  return 0;
+}
+
+uint64
+sys_mmap(void) {
+  uint64 length;
+  int prot, flags;
+  struct file *f;
+  if (argaddr(1, &length) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0 || argfd(4, 0, &f) < 0) {
+    return -1;
+  }
+
+  if (!f->writable && (flags & MAP_SHARED) && (prot & PROT_WRITE)) {
+    return -1;
+  }
+
+  struct vma* vp = allocvma();
+  if (!vp) {
+    return -1;
+  }
+  
+  vp->addr = PGROUNDUP(myproc()->sz);
+  vp->length = PGROUNDUP(length);
+  myproc()->sz = vp->addr + vp->length;
+
+  vp->offset = 0;
+  vp->prot = prot;
+  vp->flags = flags;
+  vp->file = f;
+
+  filedup(f);
+  return vp->addr;
+}
+
+uint64
+sys_munmap(void) {
+  uint64 addr, length;
+  if (argaddr(0, &addr) < 0 || argaddr(1, &length)) {
+    return -1;
+  }
+
+  addr = PGROUNDDOWN(addr);
+  length = PGROUNDUP(length);
+
+  struct vma *vp = get_vma(addr);
+  if (!vp) {
+    return -1;
+  }
+
+  if (addr == vp->addr) { //unmap at the start or unmap the whole existing mapping of vma
+    length = min(length, vp->length);
+    if (vp->flags & MAP_SHARED) {
+      uvmunmap(myproc()->pagetable, addr, length / PGSIZE, 1, vp->file, 0);
+    } else {
+      uvmunmap(myproc()->pagetable, addr, length / PGSIZE, 1, 0, 0);
+    }
+
+    vp->length -= length;
+    vp->addr += length;
+    vp->offset += length;
+  } else if (addr + length >= vp->addr + vp->length) { //unmap at the end
+    length = min((vp->addr + vp->length) - addr, length);
+    if (vp->flags & MAP_SHARED) {
+      uvmunmap(myproc()->pagetable, addr, length / PGSIZE, 1, vp->file, addr - vp->addr);
+    } else {
+      uvmunmap(myproc()->pagetable, addr, length / PGSIZE, 1, 0, 0);
+    }
+
+    vp->length -= length;
+  } else { //unmap a region in the middle of an existing mapping, which is impossible in this lab
+    panic("munmap");
+  }
+
+  if (vp->length <= 0) {
+    vp->active = 0;
+    fileclose(vp->file);
   }
   return 0;
 }

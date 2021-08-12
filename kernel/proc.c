@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -128,6 +129,8 @@ found:
     return 0;
   }
 
+  memset(&p->vma, 0, sizeof(p->vma));
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -184,7 +187,7 @@ proc_pagetable(struct proc *p)
   // map the trapframe just below TRAMPOLINE, for trampoline.S.
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
-    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0, 0, 0);
     uvmfree(pagetable, 0);
     return 0;
   }
@@ -197,8 +200,8 @@ proc_pagetable(struct proc *p)
 void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  uvmunmap(pagetable, TRAPFRAME, 1, 0);
+  uvmunmap(pagetable, TRAMPOLINE, 1, 0, 0, 0);
+  uvmunmap(pagetable, TRAPFRAME, 1, 0, 0, 0);
   uvmfree(pagetable, sz);
 }
 
@@ -296,6 +299,13 @@ fork(void)
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
 
+  memmove(np->vma, p->vma, sizeof(p->vma));
+  for(struct vma *vp = np->vma; vp < np->vma + MAXVMA; ++vp) {
+    if (vp->active) {
+      filedup(vp->file);
+    }
+  }
+
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -350,6 +360,18 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+
+  for(struct vma* vp = p->vma; vp < p->vma + MAXVMA; ++vp) {
+    if (vp->active) {
+      if (vp->prot & MAP_SHARED) {
+        uvmunmap(p->pagetable, vp->addr, vp->length / PGSIZE, 1, vp->file, vp->offset);
+      } else {
+        uvmunmap(p->pagetable, vp->addr, vp->length / PGSIZE, 1, 0, 0);
+      }
+      fileclose(vp->file);
+      vp->active = 0;
     }
   }
 
@@ -700,4 +722,27 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+struct vma *allocvma() {
+  struct proc *p = myproc();
+  struct vma* vp;
+  for (vp = p->vma; vp < p->vma + MAXVMA; vp += 1) {
+    if (!vp->active) {
+      vp->active = 1;
+      return vp;
+    }
+  }
+  return 0;
+}
+
+struct vma *get_vma(uint64 va) {
+  struct proc *p = myproc();
+  struct vma* vp;
+  for (vp = p->vma; vp < p->vma + MAXVMA; ++vp) {
+    if (vp->active && vp->addr <= va && va < vp->addr + vp->length) {
+      return vp;
+    }
+  }
+  return 0;
 }

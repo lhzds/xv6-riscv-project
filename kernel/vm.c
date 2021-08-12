@@ -5,6 +5,9 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 
 /*
  * the kernel's page table.
@@ -158,9 +161,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 
 // Remove npages of mappings starting from va. va must be
 // page-aligned. The mappings must exist.
-// Optionally free the physical memory.
+// Optionally free the physical memory and write the data back to file .
 void
-uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free, struct file* wb_file, uint64 off)
 {
   uint64 a;
   pte_t *pte;
@@ -170,11 +173,38 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
+
+    if(wb_file && (*pte & PTE_D)) {
+      int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE, n = PGSIZE, r;
+      int i = 0;
+      while(i < n){
+        int n1 = n - i;
+        if(n1 > max)
+          n1 = max;
+
+        begin_op();
+        ilock(wb_file->ip);
+        if ((r = writei(wb_file->ip, 1, a + i, off, n1)) > 0)
+          off += r;
+        iunlock(wb_file->ip);
+        end_op();
+
+        if(r != n1){
+          // error from writei
+          break;
+        }
+        i += r;
+      }
+      if (i != n) {
+        panic("writeback");
+      }
+    }
+    
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -252,7 +282,7 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
   if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
     int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
-    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
+    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1, 0, 0);
   }
 
   return newsz;
@@ -284,7 +314,7 @@ void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if(sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
+    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1, 0, 0);
   freewalk(pagetable);
 }
 
@@ -304,9 +334,9 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue;
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
@@ -320,7 +350,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 1, 0, 0);
   return -1;
 }
 

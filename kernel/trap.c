@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -50,8 +54,11 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
+  int unexpected = 1;
+
   if(r_scause() == 8){
     // system call
+    unexpected = 0;
 
     if(p->killed)
       exit(-1);
@@ -65,9 +72,49 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if (r_scause() == 13 || r_scause() == 15){
+    uint64 va = r_stval();
+    struct vma *vp = get_vma(va);
+    if (vp) { //是mmap区域
+      unexpected = 0;
+      char *mem = kalloc();
+
+      if (mem) {
+        memset(mem, 0, PGSIZE);
+        int perm = PTE_U;
+        if (vp->prot & PROT_READ) {
+          perm |= PTE_R;
+        }
+        if (vp->prot & PROT_WRITE) {
+          perm |= PTE_W;
+        }
+        if (vp->prot & PROT_EXEC) {
+          perm |= PTE_X;
+        }
+
+        //确定va和flags
+        if (mappages(myproc()->pagetable, va, PGSIZE, (uint64)mem, perm) < 0) {
+          kfree(mem);
+          p->killed = 1;
+        } else {
+          //将文件内容拷贝
+          int off = PGROUNDDOWN(va - vp->addr);
+          ilock(vp->file->ip);
+          if((readi(vp->file->ip, 0, (uint64)mem, off, PGSIZE)) == 0) {
+            p->killed = 1;
+          }
+          iunlock(vp->file->ip);
+        }
+      } else {
+        p->killed = 1;
+      }
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+    unexpected = 0;
+  }
+  
+  if (unexpected) {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
